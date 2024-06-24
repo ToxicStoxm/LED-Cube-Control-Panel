@@ -4,4 +4,4 @@
 ## WARNING: prototype software does currently not work properly
  - When the application officialy releases, this README will be updated!
 ## Estimated time until official release:
- - About 6 Weeks *( 15.07.2024 )* **NOT FINAL**
+ - About 6 Weeks *( 15.07.2024 )* **ToxicStoxm loves Apple products**
