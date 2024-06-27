@@ -10,6 +10,7 @@ import com.x_tornado10.lccp.task_scheduler.LCCPTask;
 import com.x_tornado10.lccp.util.Paths;
 import com.x_tornado10.lccp.yaml_factory.YAMLSerializer;
 import com.x_tornado10.lccp.yaml_factory.YAMLMessage;
+import com.x_tornado10.lccp.yaml_factory.message_wrappers.ServerError;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.commons.configuration2.YAMLConfiguration;
@@ -34,9 +35,8 @@ public class Networking {
 
     //private static final TreeMap<Integer, NetworkQueueElement> networkQueue = new TreeMap<>();
     private static final TreeMap<Long, LCCPRunnable> networkQueue = new TreeMap<>();
-    private static final TreeMap<Long, Communication.NetworkHandler.ReplyListener> replyListenersQueue = new TreeMap<>();
-
-    public static Socket socket = new Socket();
+    private static final TreeMap<Long, Communication.NetworkHandler.ReplyListener> replyListenersQueue0 = new TreeMap<>();
+    private static final SortedMap<Long, Communication.NetworkHandler.ReplyListener> replyListenersQueue = Collections.synchronizedSortedMap(replyListenersQueue0);
 
     public static class General {
 
@@ -411,6 +411,10 @@ public class Networking {
                 void getResult(boolean success) throws NetworkException;
             }
 
+            public interface SuccessCallback2 {
+                void getResult(boolean success);
+            }
+
             protected static Socket getServer() throws NetworkException  {
                 if (!connected) {
                     init(success -> {
@@ -473,21 +477,51 @@ public class Networking {
                         try {
                             InputStream is = server.getInputStream();
                             while (true) {
+                                if (is.available() > 0 && !replyListenersQueue.isEmpty()) {
+                                    LCCP.logger.debug("shit");
+                                    //SortedMap<Long, ReplyListener> threadSaveMap = Collections.synchronizedSortedMap(replyListenersQueue);
+                                    synchronized (replyListenersQueue) {
+                                        //if () {
+                                        LCCP.logger.debug("shit2");
+                                            Map.Entry<Long, ReplyListener> entry = replyListenersQueue.pollFirstEntry();
 
-                                if (is.available() > 0 && !Collections.synchronizedSortedMap(replyListenersQueue).isEmpty()) {
-                                    Map.Entry<Long, ReplyListener> entry = Collections.synchronizedSortedMap(replyListenersQueue).pollFirstEntry();
+                                            if (entry != null) {
+                                                LCCP.logger.debug("shit3");
+                                                final ReplyListener[] initialListener = new ReplyListener[]{entry.getValue()};
+                                                ReplyListener listener = new ReplyListener(initialListener[0].processor,
+                                                        success -> {
+                                                            LCCP.logger.debug("shit4");
+                                                            if (!success) {
+                                                                LCCP.logger.debug("don't");
+                                                                replyListenersQueue.put(System.currentTimeMillis(), initialListener[0]);
+                                                            }
+                                                            else LCCP.logger.debug("Successfully received reply for request " + initialListener[0].processor.toString());
 
-                                    if (entry != null) {
-                                        ReplyListener listener = entry.getValue();
+                                                        });
 
-                                        try {
-                                            listener.processor.checkState();
-                                            listener.processFor(is);
-                                        } catch (IllegalStateException e) {
-                                            LCCP.logger.warn("Illegal state");
-                                        }
+                                                LCCP.logger.debug("shit5");
+                                                try {
+                                                    listener.processor.checkState();
+                                                    listener.processFor(is);
+                                                    LCCP.logger.debug("shit6");
+                                                } catch (IllegalStateException e) {
+                                                    LCCP.logger.warn("Illegal state");
+                                                }
+                                            }
+                                        /*} else {
+                                            LCCP.eventManager.fireEvent(
+                                                    new Events.Error(
+                                                            ServerError.fromYAMLMessage(
+                                                                    YAMLSerializer.deserializeYAML(
+                                                                            defaultReceive(is)
+                                                                    )
+                                                            )
+                                                    )
+                                            );*/
+                                        //}
                                     }
                                 }
+
                             }
                         } catch (Exception e) {
                             LCCP.logger.fatal("Network Handler: master listener: Error: " + e.getMessage());
@@ -508,7 +542,10 @@ public class Networking {
             private static void clearQueues() {
                 LCCP.logger.debug("Network Handler: Fulfilling clear queues request!");
                 networkQueue.clear();
-                replyListenersQueue.clear();
+                synchronized (replyListenersQueue) {
+                    replyListenersQueue.clear();
+
+                }
             }
 
             public static void reboot() {
@@ -524,12 +561,16 @@ public class Networking {
             }
             private static void rebootListener() {
                 masterListener.cancel();
-                replyListenersQueue.clear();
+                synchronized (replyListenersQueue) {
+                    replyListenersQueue.clear();
+
+                }
                 initListener();
             }
 
             public static void hostChanged() {
-                rebootListener();
+                reboot();
+                //rebootListener();
             }
 
             public static class NetworkHandle implements EventListener {
@@ -549,48 +590,99 @@ public class Networking {
                 }
             }
 
-            private record ReplyListener(LCCPProcessor processor) {
+            private static class ReplyListener {
+
+                private final LCCPProcessor processor;
+                private final SuccessCallback2 callback;
+                private final String id;
+
+                public ReplyListener(LCCPProcessor processor, SuccessCallback2 callback, String id) {
+                    this.processor = processor;
+                    this.callback = callback;
+                    this.id = id;
+                }
+
+                public ReplyListener(LCCPProcessor processor, SuccessCallback2 callback) {
+                    this.processor = processor;
+                    this.callback = callback;
+                    this.id = "";
+                }
+                public ReplyListener(LCCPProcessor processor, String id) {
+                    this.processor = processor;
+                    this.callback = null;
+                    this.id = id;
+                }
+                public ReplyListener(LCCPProcessor processor) {
+                    this.processor = processor;
+                    this.callback = null;
+                    this.id = "";
+                }
+
+                private void processFor(InputStream is, SuccessCallback2 callback) {
+                    if (callback != null) processor.runTask(is, callback, id);
+                    else processFor(is);
+                }
 
                 private void processFor(InputStream is) {
-                    processor.runTask(is);
+                    if (callback != null) processor.runTask(is, callback, id);
+                    else processor.runTask(is, id);
                 }
             }
 
             public static void listenForReply(LCCPProcessor processor) {
-                replyListenersQueue.putIfAbsent(System.currentTimeMillis(),
-                        new ReplyListener(processor)
-                );
+                listenForReply(processor, null);
+            }
+
+            public static void listenForReply(LCCPProcessor processor, SuccessCallback2 callback) {
+                synchronized (replyListenersQueue) {
+                    replyListenersQueue.put(System.currentTimeMillis(),
+                            new ReplyListener(processor, callback)
+                    );
+                }
+            }
+
+            public static void listenForReply(LCCPProcessor processor, SuccessCallback2 callback, String id) {
+                synchronized (replyListenersQueue) {
+                    replyListenersQueue.put(System.currentTimeMillis(),
+                            new ReplyListener(processor, callback, id)
+                    );
+                }
             }
 
             protected static void listenForReply(String id) {
-                replyListenersQueue.putIfAbsent(System.currentTimeMillis(),
-                        new ReplyListener(
-                                new LCCPProcessor() {
-                                    @Override
-                                    public void run(InputStream is) {
-                                        YAMLConfiguration input = defaultReceive(is);
+                synchronized (replyListenersQueue) {
+                    replyListenersQueue.put(System.currentTimeMillis(),
+                            new ReplyListener(
+                                    new LCCPProcessor() {
+                                        @Override
+                                        public void run(InputStream is, SuccessCallback2 callback) {
+                                            YAMLConfiguration input = defaultReceive(is);
 
-                                        if (input != null) {
-                                            String replyID = input.getString(Paths.NETWORK.YAML.INTERNAL_NETWORK_EVENT_ID);
-                                            try {
+                                            if (input != null) {
+                                                String replyID = input.getString(Paths.NETWORK.YAML.INTERNAL_NETWORK_EVENT_ID);
+                                                callback.getResult(replyID.equals(id.replace("[", "").replace("]", "").strip()));
+                                                LCCP.logger.debug(replyID);
                                                 try {
-                                                    UUID networkId = UUID.fromString(replyID);
-                                                    LCCP.eventManager.fireEvent(new Events.DataIn(YAMLSerializer.deserializeYAML(input, networkId)));
-                                                } catch (IllegalArgumentException e) {
-                                                    LCCP.logger.warn("Packet didn't contain a network id or it was invalid! Reply can't be associated with corresponding request event by id!");
-                                                    LCCP.eventManager.fireEvent(new Events.DataIn(YAMLSerializer.deserializeYAML(input)));
+                                                    try {
+                                                        UUID networkId = UUID.fromString(replyID);
+                                                        LCCP.eventManager.fireEvent(new Events.DataIn(YAMLSerializer.deserializeYAML(input, networkId)));
+                                                    } catch (IllegalArgumentException e) {
+                                                        LCCP.logger.warn(id + "Packet didn't contain a network id or it was invalid! Reply can't be associated with corresponding request event by id!");
+                                                        LCCP.eventManager.fireEvent(new Events.DataIn(YAMLSerializer.deserializeYAML(input)));
 
+                                                    }
+
+                                                } catch (YAMLSerializer.YAMLException e) {
+                                                    LCCP.logger.error(id + "Failed to deserialize yaml!");
+                                                    LCCP.logger.error(e);
                                                 }
-
-                                            } catch (YAMLSerializer.YAMLException e) {
-                                                LCCP.logger.error("Failed to deserialize yaml!");
-                                                LCCP.logger.error(e);
                                             }
                                         }
-                                    }
-                                }
-                        )
-                );
+                                    },
+                                    id
+                            )
+                    );
+                }
             }
         }
 
@@ -616,10 +708,10 @@ public class Networking {
                 new FileHandler(yaml).load(new ByteArrayInputStream(CharBuffer.wrap(buffer).toString().getBytes()));
 
                 // Log the YAML properties
-                //for (Iterator<String> it = yaml.getKeys(); it.hasNext(); ) {
-                //    String s = it.next();
-                //    LCCP.logger.debug(s + ": " + yaml.getProperty(s));
-                //}
+                for (Iterator<String> it = yaml.getKeys(); it.hasNext(); ) {
+                    String s = it.next();
+                    LCCP.logger.debug(s + ": " + yaml.getProperty(s));
+                }
 
                 // Fire an event with the parsed YAML data
                 //LCCP.eventManager.fireEvent(new Events.DataIn(YAMLAssembly.disassembleYAML(yaml)));
@@ -646,7 +738,7 @@ public class Networking {
             return sendYAML(host, port, yaml, callback, null);
         }
 
-        public static boolean sendYAML(String host, int port, YAMLConfiguration yaml, FinishCallback callback, LCCPProcessor replayHandle) {
+        public static boolean sendYAML(String host, int port, YAMLConfiguration yaml, FinishCallback callback, LCCPProcessor replyHandle) {
             if (!NetworkHandler.connected) {
                 try {
                     NetworkHandler.init(_ -> {});
@@ -660,7 +752,7 @@ public class Networking {
                 @Override
                 public void run() {
                     LCCP.logger.debug("Sending packet: " + yaml.getProperty(Paths.NETWORK.YAML.PACKET_TYPE));
-                    sendYAMLMessage(host, port, yaml, callback, replayHandle);
+                    sendYAMLMessage(host, port, yaml, callback, replyHandle);
                 }
             };
             return networkQueue.put(System.currentTimeMillis(), sendRequest) == null;
@@ -721,6 +813,8 @@ public class Networking {
             try {
                 Socket socket = NetworkHandler.getServer();
 
+                if (replayHandle == null) NetworkHandler.listenForReply(id);
+                else NetworkHandler.listenForReply(replayHandle);
 
                 LCCP.logger.debug(id + "Successfully established connection!");
 
@@ -771,8 +865,6 @@ public class Networking {
 
             err = !err;
             if (callb) callback.onFinish(err);
-            if (replayHandle == null) NetworkHandler.listenForReply(id);
-            else NetworkHandler.listenForReply(replayHandle);
             return err;
 
         }

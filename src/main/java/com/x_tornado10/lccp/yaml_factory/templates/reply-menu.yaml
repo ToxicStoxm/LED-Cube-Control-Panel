@@ -3,6 +3,9 @@
 
 package_type: reply
 reply_type: menu
+0:
+  name: group0-name
+
 group0-name:
   pos: 0 # group position
 

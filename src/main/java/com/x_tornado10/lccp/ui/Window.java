@@ -485,19 +485,10 @@ public class Window extends ApplicationWindow implements EventListener {
     }
     protected void getStatus() {
         try {
-            Networking.Communication.sendYAML(LCCP.server_settings.getIPv4(), LCCP.server_settings.getPort(), new YAMLMessage()
+            Networking.Communication.sendYAMLDefaultHost(new YAMLMessage()
                             .setPacketType(YAMLMessage.PACKET_TYPE.request)
                             .setReplyType(YAMLMessage.REPLY_TYPE.status)
-                            .build(),
-                    null,
-                    new LCCPProcessor() {
-                        @Override
-                        public void run(InputStream is) {
-                            YAMLConfiguration input = Networking.Communication.defaultReceive(is);
-
-
-                        }
-                    }
+                            .build()
             );
         } catch (YAMLSerializer.TODOException | ConfigurationException | YAMLSerializer.InvalidReplyTypeException |
                  YAMLSerializer.InvalidPacketTypeException e) {
