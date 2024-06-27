@@ -19,6 +19,7 @@ public class NetworkLogger {
         if (networkEvents.putIfAbsent(id, description) == null) order.put(order.size(), id);
         return id;
     }
+
     public void printEvents() {
         alignNetworkEvents();
         boolean empty = networkEvents.isEmpty() && order.isEmpty();

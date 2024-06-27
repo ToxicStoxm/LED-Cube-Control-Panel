@@ -412,7 +412,7 @@ public class Networking {
             }
 
             public interface SuccessCallback2 {
-                void getResult(boolean success);
+                void getResult(boolean success, YAMLConfiguration yaml);
             }
 
             protected static Socket getServer() throws NetworkException  {
@@ -478,32 +478,31 @@ public class Networking {
                             InputStream is = server.getInputStream();
                             while (true) {
                                 if (is.available() > 0 && !replyListenersQueue.isEmpty()) {
-                                    LCCP.logger.debug("shit");
-                                    //SortedMap<Long, ReplyListener> threadSaveMap = Collections.synchronizedSortedMap(replyListenersQueue);
                                     synchronized (replyListenersQueue) {
                                         //if () {
-                                        LCCP.logger.debug("shit2");
                                             Map.Entry<Long, ReplyListener> entry = replyListenersQueue.pollFirstEntry();
 
                                             if (entry != null) {
-                                                LCCP.logger.debug("shit3");
                                                 final ReplyListener[] initialListener = new ReplyListener[]{entry.getValue()};
                                                 ReplyListener listener = new ReplyListener(initialListener[0].processor,
-                                                        success -> {
-                                                            LCCP.logger.debug("shit4");
+                                                        (success, yaml) -> {
                                                             if (!success) {
-                                                                LCCP.logger.debug("don't");
-                                                                replyListenersQueue.put(System.currentTimeMillis(), initialListener[0]);
+                                                                if (checkError(yaml)) {
+                                                                    LCCP.logger.debug("Detected network event id miss match!");
+                                                                    LCCP.logger.debug("Reply listener + ID[" + initialListener[0].id + "] was re added to queue because error packet was detected!");
+                                                                    replyListenersQueue.put(System.currentTimeMillis(), initialListener[0]);
+                                                                } else {
+                                                                    LCCP.logger.debug("Detected network event id miss match!");
+                                                                    LCCP.logger.debug("Reply listener + ID[" + initialListener[0].id + "] was discarded because received packet is not an error packet!");
+                                                                }
                                                             }
                                                             else LCCP.logger.debug("Successfully received reply for request " + initialListener[0].processor.toString());
 
                                                         });
 
-                                                LCCP.logger.debug("shit5");
                                                 try {
                                                     listener.processor.checkState();
                                                     listener.processFor(is);
-                                                    LCCP.logger.debug("shit6");
                                                 } catch (IllegalStateException e) {
                                                     LCCP.logger.warn("Illegal state");
                                                 }
@@ -531,6 +530,19 @@ public class Networking {
                     }
                 }.runTaskAsynchronously();
                 LCCP.logger.debug("Network Handler: started master listener!");
+            }
+
+            private static boolean checkError(YAMLConfiguration yaml) {
+                try {
+                    YAMLMessage yamlMsg = YAMLSerializer.deserializeYAML(yaml);
+                    if (yamlMsg.getPacketType().equals(YAMLMessage.PACKET_TYPE.error)) {
+                        LCCP.eventManager.fireEvent(new Events.Error(ServerError.fromYAMLMessage(yamlMsg)));
+                        return true;
+                    }
+                    return false;
+                } catch (YAMLSerializer.YAMLException e) {
+                    return false;
+                }
             }
 
             private static void cancel() {
@@ -660,7 +672,7 @@ public class Networking {
 
                                             if (input != null) {
                                                 String replyID = input.getString(Paths.NETWORK.YAML.INTERNAL_NETWORK_EVENT_ID);
-                                                callback.getResult(replyID.equals(id.replace("[", "").replace("]", "").strip()));
+                                                callback.getResult(replyID.equals(id.replace("[", "").replace("]", "").strip()), input);
                                                 LCCP.logger.debug(replyID);
                                                 try {
                                                     try {
@@ -708,10 +720,10 @@ public class Networking {
                 new FileHandler(yaml).load(new ByteArrayInputStream(CharBuffer.wrap(buffer).toString().getBytes()));
 
                 // Log the YAML properties
-                for (Iterator<String> it = yaml.getKeys(); it.hasNext(); ) {
-                    String s = it.next();
-                    LCCP.logger.debug(s + ": " + yaml.getProperty(s));
-                }
+                //for (Iterator<String> it = yaml.getKeys(); it.hasNext(); ) {
+                //    String s = it.next();
+                //    LCCP.logger.debug(s + ": " + yaml.getProperty(s));
+                //}
 
                 // Fire an event with the parsed YAML data
                 //LCCP.eventManager.fireEvent(new Events.DataIn(YAMLAssembly.disassembleYAML(yaml)));
