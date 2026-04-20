@@ -6,7 +6,7 @@ replace-placeholders = "3.0"
 # libraries
 classgraph = "4.8.184"
 jakarta-websocket = "2.2.0"
-javagi = "0.14.1"
+javagi = "0.15.0"
 jetbrains-annotations = "26.1.0"
 junit = "6.1.0-M1"
 lombok = "1.18.44"
